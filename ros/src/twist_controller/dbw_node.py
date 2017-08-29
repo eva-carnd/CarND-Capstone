@@ -54,16 +54,20 @@ class DBWNode(object):
                                          BrakeCmd, queue_size=1)
 
         # TODO: Create `TwistController` object
-        # self.controller = TwistController(<Arguments you wish to provide>)
+        self.controller = TwistController()
 
         # TODO: Subscribe to all the topics you need to
 
         self.dbw_enabled = False
+        self.latest_twist_cmd = None
 
+        rospy.Subscriber('/twist_cmd', Bool, self.on_twist_cmd)
         rospy.Subscriber('/vehicle/dbw_enabled', Bool, self.set_dbw_enabled)
-        
+
         self.loop()
 
+    def on_twist_cmd(self, twist_cmd):
+        self.latest_twist_cmd = twist_cmd
 
     def set_dbw_enabled(self, dbw_enabled):
         self.dbw_enabled = dbw_enabled
@@ -72,6 +76,9 @@ class DBWNode(object):
     def loop(self):
         rate = rospy.Rate(50) # 50Hz
         while not rospy.is_shutdown():
+
+
+
             # TODO: Get predicted throttle, brake, and steering using `twist_controller`
             # You should only publish the control commands if dbw is enabled
             # throttle, brake, steering = self.controller.control(<proposed linear velocity>,
@@ -81,11 +88,11 @@ class DBWNode(object):
             #                                                     <any other argument you need>)
             rospy.loginfo("""DBW enabled: {}""".format(self.dbw_enabled))
             if self.dbw_enabled:
-                throttle, brake, steer = 0.5, 0.0, 0.0
-                # self.publish(throttle, brake, steer)
+                throttle, brake, steer = 40.0, 0.0, 0.0
+                self.publish(throttle, brake, steer)
             rate.sleep()
 
-    def publish(self, throttle, brake, steer):
+    def publish(self, linear, steer):
         tcmd = ThrottleCmd()
         tcmd.enable = True
         tcmd.pedal_cmd_type = ThrottleCmd.CMD_PERCENT
@@ -101,7 +108,8 @@ class DBWNode(object):
         bcmd.enable = True
         bcmd.pedal_cmd_type = BrakeCmd.CMD_TORQUE
         bcmd.pedal_cmd = brake
-        self.brake_pub.publish(bcmd)
+        # TODO do we need a conversion for the brake from percent to torque?
+        #self.brake_pub.publish(bcmd)
 
 
 if __name__ == '__main__':
