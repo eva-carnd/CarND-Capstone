@@ -54,14 +54,42 @@ class DBWNode(object):
                                          BrakeCmd, queue_size=1)
 
         # TODO: Create `TwistController` object
-        self.controller = TwistController()
+        self.controller = Controller()
 
         # TODO: Subscribe to all the topics you need to
 
+        '''
+        root@c7e6b071cd89:~# rostopic list
+            /base_waypoints
+            /camera/image_raw
+            /current_pose
+            [S] /current_velocity
+            /final_waypoints
+            /rosout
+            /rosout_agg
+            /tf
+            /tf_static
+            /traffic_waypoint
+            [S] /twist_cmd
+            [P] /vehicle/brake_cmd
+            /vehicle/brake_report
+            [S] /vehicle/dbw_enabled
+            /vehicle/lidar
+            /vehicle/obstacle
+            /vehicle/obstacle_points
+            [P] /vehicle/steering_cmd
+            /vehicle/steering_report
+            [P] /vehicle/throttle_cmd
+            /vehicle/throttle_report
+            /vehicle/traffic_lights
+        '''
+
         self.dbw_enabled = False
         self.latest_twist_cmd = None
+        self.latest_velocity = None
 
-        rospy.Subscriber('/twist_cmd', Bool, self.on_twist_cmd)
+        rospy.Subscriber('/twist_cmd', TwistStamped, self.on_twist_cmd)
+        rospy.Subscriber('/current_velocity', TwistStamped, self.on_current_velocity)
         rospy.Subscriber('/vehicle/dbw_enabled', Bool, self.set_dbw_enabled)
 
         self.loop()
@@ -69,15 +97,15 @@ class DBWNode(object):
     def on_twist_cmd(self, twist_cmd):
         self.latest_twist_cmd = twist_cmd
 
+    def on_current_velocity(self, current_velocity):
+        self.latest_velocity = current_velocity
+
     def set_dbw_enabled(self, dbw_enabled):
         self.dbw_enabled = dbw_enabled
-
 
     def loop(self):
         rate = rospy.Rate(50) # 50Hz
         while not rospy.is_shutdown():
-
-
 
             # TODO: Get predicted throttle, brake, and steering using `twist_controller`
             # You should only publish the control commands if dbw is enabled
@@ -86,30 +114,37 @@ class DBWNode(object):
             #                                                     <current linear velocity>,
             #                                                     <dbw status>,
             #                                                     <any other argument you need>)
-            rospy.loginfo("""DBW enabled: {}""".format(self.dbw_enabled))
-            if self.dbw_enabled:
-                throttle, brake, steer = 40.0, 0.0, 0.0
+
+            #rospy.loginfo("""DBW enabled: {}""".format(self.dbw_enabled))
+            if self.dbw_enabled and self.latest_velocity and self.latest_twist_cmd: # TODO make sure this data is available
+                throttle, brake, steer = self.controller.control(self.latest_velocity, self.latest_twist_cmd)
+                rospy.loginfo("""T B S: {} {} {}""".format(throttle, brake, steer))
                 self.publish(throttle, brake, steer)
+            else:
+                self.controller.reset()
             rate.sleep()
 
-    def publish(self, linear, steer):
-        tcmd = ThrottleCmd()
-        tcmd.enable = True
-        tcmd.pedal_cmd_type = ThrottleCmd.CMD_PERCENT
-        tcmd.pedal_cmd = throttle
-        self.throttle_pub.publish(tcmd)
+    def publish(self, throttle, brake, steer):
+
+        if (throttle > 0.0):
+            tcmd = ThrottleCmd()
+            tcmd.enable = True
+            tcmd.pedal_cmd_type = ThrottleCmd.CMD_PERCENT
+            tcmd.pedal_cmd = throttle
+            self.throttle_pub.publish(tcmd)
 
         scmd = SteeringCmd()
         scmd.enable = True
         scmd.steering_wheel_angle_cmd = steer
         self.steer_pub.publish(scmd)
 
-        bcmd = BrakeCmd()
-        bcmd.enable = True
-        bcmd.pedal_cmd_type = BrakeCmd.CMD_TORQUE
-        bcmd.pedal_cmd = brake
-        # TODO do we need a conversion for the brake from percent to torque?
-        #self.brake_pub.publish(bcmd)
+        if (brake > 0.0):
+            bcmd = BrakeCmd()
+            bcmd.enable = True
+            bcmd.pedal_cmd_type = BrakeCmd.CMD_TORQUE
+            bcmd.pedal_cmd = brake
+            # TODO do we need a conversion for the brake from percent to torque?
+            self.brake_pub.publish(bcmd)
 
 
 if __name__ == '__main__':
