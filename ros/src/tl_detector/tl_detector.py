@@ -7,7 +7,7 @@ from styx_msgs.msg import Lane
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
 from light_classification.tl_classifier import TLClassifier
-import tfi # TODO might be obsolete
+import tf # TODO might be obsolete
 import tf2_ros
 import tf2_geometry_msgs
 import cv2
@@ -117,6 +117,11 @@ class TLDetector(object):
 
         """
 
+	pose_in_world = PoseStamped()
+	pose_in_world.pose.position.x = point_in_world[0]
+	pose_in_world.pose.position.y = point_in_world[1]
+	pose_in_world.pose.position.z = 2.0 #point_in_world[2] TODO info is missing in sim!
+
         fx = config.camera_info.focal_length_x
         fy = config.camera_info.focal_length_y
 
@@ -126,14 +131,14 @@ class TLDetector(object):
         # get transform between pose of camera and world frame
         trans = None
         try:
-            target_frame = "/base_link"
-            source_frame = "/world" 
-            transform = tf_buffer.lookup_transform(target_frame,
+            target_frame = "base_link"
+            source_frame = "world" 
+            transform = self.tf_buffer.lookup_transform(target_frame,
                                        source_frame,
                                        rospy.Time(0), #get the tf at first available time
                                        rospy.Duration(1.0)) #wait for 1 second
 
-            pose_transformed = tf2_geometry_msgs.do_transform_pose(point_in_world, transform) # TODO point might not actually be a pose
+            pose_transformed = tf2_geometry_msgs.do_transform_pose(pose_in_world, transform) # TODO point might not actually be a pose
 
         except (tf.Exception, tf.LookupException, tf.ConnectivityException): # TODO tf2 will throw different exceptions
             rospy.logerr("Failed to find camera to map transform")
@@ -150,7 +155,7 @@ class TLDetector(object):
         
         # check if point is actually visible
         # assuming fx is canvasWidth, fy is canvasHeight
-        if (abs(screen_x) > fx || abs(screen_y) > fy) 
+        if (abs(screen_x) > fx or abs(screen_y) > fy): 
             # return false;
             # TODO figure out how to deal with the tl not being visible
             pass
@@ -160,8 +165,8 @@ class TLDetector(object):
         norm_screen_y = (screen_y + fy / 2) / fy
         
         # convert to pixel coordinates
-        pix_x = floor(norm_screen_x * image_width)
-        pix_y = floor((1-norm_screen_y) * image_height)
+        pix_x = math.floor(norm_screen_x * image_width)
+        pix_y = math.floor((1-norm_screen_y) * image_height)
         
         return (pix_x, pix_y)
 
@@ -182,7 +187,9 @@ class TLDetector(object):
         self.camera_image.encoding = "rgb8"
         cv_image = self.bridge.imgmsg_to_cv2(self.camera_image, "bgr8")
 
-        x, y = self.project_to_image_plane(light.pose.pose.position)
+        x, y = self.project_to_image_plane(light)
+
+	print("Traffic light position in image:",x, y)
 
         #TODO use light location to zoom in on traffic light in image
 
@@ -203,14 +210,13 @@ class TLDetector(object):
             int: ID of traffic light color (specified in styx_msgs/TrafficLight)
 
         """
-        light = None
+        closest_light_position = None
         light_positions = config.light_positions
         if(self.pose and self.waypoints):
             closest_waypoint_index = self.get_closest_waypoint(self.pose.pose)
             closest_waypoint_ps = self.waypoints.waypoints[closest_waypoint_index].pose
 
             #TODO find the closest visible traffic light (if one exists)
-            closest_light_position = None
             closest_light_distance = float("inf")
             for light_position in config.light_positions:
                 distance = self.euclidean_distance(light_position[0], light_position[1], closest_waypoint_ps.pose.position.x, closest_waypoint_ps.pose.position.y)
@@ -218,9 +224,9 @@ class TLDetector(object):
                     closest_light_distance = distance
                     closest_light_position = light_position
 
-        if light:
-            state = self.get_light_state(light)
-            return light_wp, state
+        if closest_light_position:
+            state = self.get_light_state(closest_light_position)
+            #return light_wp, state # TODO enable
         self.waypoints = None
         return -1, TrafficLight.UNKNOWN
 
