@@ -7,7 +7,9 @@ from styx_msgs.msg import Lane
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
 from light_classification.tl_classifier import TLClassifier
-import tf
+import tfi # TODO might be obsolete
+import tf2_ros
+import tf2_geometry_msgs
 import cv2
 import math
 from traffic_light_config import config
@@ -40,7 +42,8 @@ class TLDetector(object):
 
         self.bridge = CvBridge()
         self.light_classifier = TLClassifier()
-        self.listener = tf.TransformListener()
+	self.tf_buffer = tf2_ros.Buffer(rospy.Duration(1200.0)) #tf buffer length
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
 
         self.state = TrafficLight.UNKNOWN
         self.last_state = TrafficLight.UNKNOWN
@@ -123,21 +126,23 @@ class TLDetector(object):
         # get transform between pose of camera and world frame
         trans = None
         try:
-            now = rospy.Time.now()
-            self.listener.waitForTransform("/base_link",
-                  "/world", now, rospy.Duration(1.0))
-            (trans, rot) = self.listener.lookupTransform("/base_link",
-                  "/world", now)
+            target_frame = "/base_link"
+            source_frame = "/world" 
+            transform = tf_buffer.lookup_transform(target_frame,
+                                       source_frame,
+                                       rospy.Time(0), #get the tf at first available time
+                                       rospy.Duration(1.0)) #wait for 1 second
 
-        except (tf.Exception, tf.LookupException, tf.ConnectivityException):
+            pose_transformed = tf2_geometry_msgs.do_transform_pose(point_in_world, transform) # TODO point might not actually be a pose
+
+        except (tf.Exception, tf.LookupException, tf.ConnectivityException): # TODO tf2 will throw different exceptions
             rospy.logerr("Failed to find camera to map transform")
         
-        # TODO these should come from transforming the tl coordinates to base_link
-        camera_x = 0.0
-        camera_y = 0.0
-        camera_z = 0.0
+        camera_x = pose_transformed.pose.position.x
+        camera_y = pose_transformed.pose.position.y
+        camera_z = pose_transformed.pose.position.z
 
-        #TODO Use tranform and rotation to calculate 2D position of light in image
+        # Use tranform and rotation to calculate 2D position of light in image
         # From: https://www.scratchapixel.com/lessons/3d-basic-rendering/computing-pixel-coordinates-of-3d-point/mathematics-computing-2d-coordinates-of-3d-points
         
         screen_x = camera_x / -camera_z
