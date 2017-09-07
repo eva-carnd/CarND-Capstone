@@ -131,13 +131,34 @@ class TLDetector(object):
 
         except (tf.Exception, tf.LookupException, tf.ConnectivityException):
             rospy.logerr("Failed to find camera to map transform")
+        
+        # TODO these should come from transforming the tl coordinates to base_link
+        camera_x = 0.0
+        camera_y = 0.0
+        camera_z = 0.0
 
         #TODO Use tranform and rotation to calculate 2D position of light in image
-
-        x = 0
-        y = 0
-
-        return (x, y)
+        # From: https://www.scratchapixel.com/lessons/3d-basic-rendering/computing-pixel-coordinates-of-3d-point/mathematics-computing-2d-coordinates-of-3d-points
+        
+        screen_x = camera_x / -camera_z
+        screen_y = camera_y / -camera_z
+        
+        # check if point is actually visible
+        # assuming fx is canvasWidth, fy is canvasHeight
+        if (abs(screen_x) > fx || abs(screen_y) > fy) 
+            # return false;
+            # TODO figure out how to deal with the tl not being visible
+            pass
+        
+        # normalize to [0,1]
+        norm_screen_x = (screen_x + fx / 2) / fx
+        norm_screen_y = (screen_y + fy / 2) / fy
+        
+        # convert to pixel coordinates
+        pix_x = floor(norm_screen_x * image_width)
+        pix_y = floor((1-norm_screen_y) * image_height)
+        
+        return (pix_x, pix_y)
 
     def get_light_state(self, light):
         """Determines the current color of the traffic light
