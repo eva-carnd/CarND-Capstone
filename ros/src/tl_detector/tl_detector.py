@@ -122,8 +122,12 @@ class TLDetector(object):
 	pose_in_world.pose.position.y = point_in_world[1]
 	pose_in_world.pose.position.z = 2.0 #point_in_world[2] TODO info is missing in sim!
 
-        fx = config.camera_info.focal_length_x
-        fy = config.camera_info.focal_length_y
+        #fx = config.camera_info.focal_length_x
+        #fy = config.camera_info.focal_length_y
+
+	# TODO this is a hack, only for testing, we actually have to calculate the canvas size
+	fx = 7.0
+	fy = 4.0
 
         image_width = config.camera_info.image_width
         image_height = config.camera_info.image_height
@@ -142,14 +146,17 @@ class TLDetector(object):
 
         except (tf.Exception, tf.LookupException, tf.ConnectivityException): # TODO tf2 will throw different exceptions
             rospy.logerr("Failed to find camera to map transform")
-        
-        camera_x = pose_transformed.pose.position.x
-        camera_y = pose_transformed.pose.position.y
-        camera_z = pose_transformed.pose.position.z
+ 
+        camera_z = pose_transformed.pose.position.x
+        camera_x = -pose_transformed.pose.position.y
+        camera_y = -pose_transformed.pose.position.z
+
+	print("camera_x", camera_x, "camera_y", camera_y, "camera_z", camera_z)
 
         # Use tranform and rotation to calculate 2D position of light in image
         # From: https://www.scratchapixel.com/lessons/3d-basic-rendering/computing-pixel-coordinates-of-3d-point/mathematics-computing-2d-coordinates-of-3d-points
         
+	# x and y exchanged
         screen_x = camera_x / -camera_z
         screen_y = camera_y / -camera_z
         
@@ -213,11 +220,14 @@ class TLDetector(object):
         closest_light_position = None
         light_positions = config.light_positions
         if(self.pose and self.waypoints):
+	    #print("Self",self.pose.pose.position.x,self.pose.pose.position.y,self.pose.pose.position.z)
             closest_waypoint_index = self.get_closest_waypoint(self.pose.pose)
             closest_waypoint_ps = self.waypoints.waypoints[closest_waypoint_index].pose
 
+	    #print("Closest WP",closest_waypoint_ps.pose.position.x, closest_waypoint_ps.pose.position.y)
+
             #TODO find the closest visible traffic light (if one exists)
-            closest_light_distance = float("inf")
+            closest_light_distance = 99999999.9
             for light_position in config.light_positions:
                 distance = self.euclidean_distance(light_position[0], light_position[1], closest_waypoint_ps.pose.position.x, closest_waypoint_ps.pose.position.y)
                 if distance < closest_light_distance:
@@ -225,6 +235,7 @@ class TLDetector(object):
                     closest_light_position = light_position
 
         if closest_light_position:
+	    #print("Closest Light:",closest_light_position)
             state = self.get_light_state(closest_light_position)
             #return light_wp, state # TODO enable
         self.waypoints = None
