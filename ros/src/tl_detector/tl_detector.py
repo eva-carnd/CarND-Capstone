@@ -13,6 +13,7 @@ import tf2_geometry_msgs
 import cv2
 import math
 import yaml
+import numpy as np
 
 STATE_COUNT_THRESHOLD = 3
 
@@ -126,7 +127,16 @@ class TLDetector(object):
         image_width = self.config['camera_info']['image_width']
         image_height = self.config['camera_info']['image_height']
 
-        # get transform between pose of camera and world frame
+        pose_in_world = PoseStamped()
+        pose_in_world.pose.position.x = point_in_world[0]
+        pose_in_world.pose.position.y = point_in_world[1]
+        pose_in_world.pose.position.z = 2.0 #point_in_world[2] TODO info is missing in sim!
+        pose_in_world.pose.orientation.x = 0.0
+        pose_in_world.pose.orientation.y = 0.0
+        pose_in_world.pose.orientation.z = 0.0
+        pose_in_world.pose.orientation.w = 1.0
+
+         # get transform between pose of camera and world frame
         trans = None
         try:
             target_frame = "base_link"
@@ -147,31 +157,16 @@ class TLDetector(object):
 
         print("camera_x", camera_x, "camera_y", camera_y, "camera_z", camera_z)
 
+        # and now for image frame
         camera_x = -pose_transformed.pose.position.y
         camera_y = -pose_transformed.pose.position.z
         camera_z = pose_transformed.pose.position.x
 
-        # Use tranform and rotation to calculate 2D position of light in image
-        # From: https://www.scratchapixel.com/lessons/3d-basic-rendering/computing-pixel-coordinates-of-3d-point/mathematics-computing-2d-coordinates-of-3d-points
-
-	    # x and y exchanged
-        screen_x = camera_x / -camera_z
-        screen_y = camera_y / -camera_z
-
-        # check if point is actually visible
-        # assuming fx is canvasWidth, fy is canvasHeight
-        if (abs(screen_x) > fx or abs(screen_y) > fy):
-            # return false;
-            # TODO figure out how to deal with the tl not being visible
-            pass
-
-        # normalize to [0,1]
-        norm_screen_x = (screen_x + fx / 2) / fx
-        norm_screen_y = (screen_y + fy / 2) / fy
-
-        # convert to pixel coordinates
-        pix_x = math.floor(norm_screen_x * image_width)
-        pix_y = math.floor((1-norm_screen_y) * image_height)
+        objectPoints = np.array([[camera_x, camera_y, camera_z]], dtype=np.float32)
+        cameraMatrix = np.array([[fx, 0, image_width/2.0], [0, fy, image_height/2.0], [0, 0, 1]])
+        projected, _ = cv2.projectPoints(objectPoints, (0,0,0), (0,0,0), cameraMatrix, None)
+        pix_x = int(math.floor(projected[0,0,0]))
+        pix_y = int(math.floor(projected[0,0,1]))
 
         return (pix_x, pix_y)
 
@@ -234,7 +229,7 @@ class TLDetector(object):
 
             #TODO find the closest visible traffic light (if one exists)
             closest_light_distance = 99999999.9
-            for light_position in config.light_positions:
+            for light_position in self.config['light_positions']:
                 distance = self.euclidean_distance(light_position[0], light_position[1], closest_waypoint_ps.pose.position.x, closest_waypoint_ps.pose.position.y)
                 if distance < closest_light_distance:
                     closest_light_distance = distance
