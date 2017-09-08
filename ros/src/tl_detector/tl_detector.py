@@ -38,11 +38,12 @@ class TLDetector(object):
         sub3 = rospy.Subscriber('/vehicle/traffic_lights', TrafficLightArray, self.traffic_cb)
         sub6 = rospy.Subscriber('/camera/image_raw', Image, self.image_cb)
 
+        self.test_image_pub = rospy.Publisher('/test_image', Image, queue_size=2)
         self.upcoming_red_light_pub = rospy.Publisher('/traffic_waypoint', Int32, queue_size=1)
 
         self.bridge = CvBridge()
         self.light_classifier = TLClassifier()
-	self.tf_buffer = tf2_ros.Buffer(rospy.Duration(1200.0)) #tf buffer length
+        self.tf_buffer = tf2_ros.Buffer(rospy.Duration(1200.0)) #tf buffer length
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
 
         self.state = TrafficLight.UNKNOWN
@@ -117,17 +118,17 @@ class TLDetector(object):
 
         """
 
-	pose_in_world = PoseStamped()
-	pose_in_world.pose.position.x = point_in_world[0]
-	pose_in_world.pose.position.y = point_in_world[1]
-	pose_in_world.pose.position.z = 2.0 #point_in_world[2] TODO info is missing in sim!
+    	pose_in_world = PoseStamped()
+    	pose_in_world.pose.position.x = point_in_world[0]
+    	pose_in_world.pose.position.y = point_in_world[1]
+    	pose_in_world.pose.position.z = rospy.get_param("~camera_height")
 
         #fx = config.camera_info.focal_length_x
         #fy = config.camera_info.focal_length_y
 
-	# TODO this is a hack, only for testing, we actually have to calculate the canvas size
-	fx = 7.0
-	fy = 4.0
+    	# TODO this is a hack, only for testing, we actually have to calculate the canvas size
+    	fx = rospy.get_param("~canvas_size_x")
+    	fy = rospy.get_param("~canvas_size_y")
 
         image_width = config.camera_info.image_width
         image_height = config.camera_info.image_height
@@ -136,45 +137,49 @@ class TLDetector(object):
         trans = None
         try:
             target_frame = "base_link"
-            source_frame = "world" 
+            source_frame = "world"
             transform = self.tf_buffer.lookup_transform(target_frame,
                                        source_frame,
                                        rospy.Time(0), #get the tf at first available time
                                        rospy.Duration(1.0)) #wait for 1 second
 
-            pose_transformed = tf2_geometry_msgs.do_transform_pose(pose_in_world, transform) # TODO point might not actually be a pose
+            pose_transformed = tf2_geometry_msgs.do_transform_pose(pose_in_world, transform)
 
         except (tf.Exception, tf.LookupException, tf.ConnectivityException): # TODO tf2 will throw different exceptions
             rospy.logerr("Failed to find camera to map transform")
- 
-        camera_z = pose_transformed.pose.position.x
+
+        camera_x = pose_transformed.pose.position.x
+        camera_y = pose_transformed.pose.position.y
+        camera_z = pose_transformed.pose.position.z
+
+        print("camera_x", camera_x, "camera_y", camera_y, "camera_z", camera_z)
+
         camera_x = -pose_transformed.pose.position.y
         camera_y = -pose_transformed.pose.position.z
-
-	print("camera_x", camera_x, "camera_y", camera_y, "camera_z", camera_z)
+        camera_z = pose_transformed.pose.position.x
 
         # Use tranform and rotation to calculate 2D position of light in image
         # From: https://www.scratchapixel.com/lessons/3d-basic-rendering/computing-pixel-coordinates-of-3d-point/mathematics-computing-2d-coordinates-of-3d-points
-        
-	# x and y exchanged
+
+	    # x and y exchanged
         screen_x = camera_x / -camera_z
         screen_y = camera_y / -camera_z
-        
+
         # check if point is actually visible
         # assuming fx is canvasWidth, fy is canvasHeight
-        if (abs(screen_x) > fx or abs(screen_y) > fy): 
+        if (abs(screen_x) > fx or abs(screen_y) > fy):
             # return false;
             # TODO figure out how to deal with the tl not being visible
             pass
-        
+
         # normalize to [0,1]
         norm_screen_x = (screen_x + fx / 2) / fx
         norm_screen_y = (screen_y + fy / 2) / fy
-        
+
         # convert to pixel coordinates
         pix_x = math.floor(norm_screen_x * image_width)
         pix_y = math.floor((1-norm_screen_y) * image_height)
-        
+
         return (pix_x, pix_y)
 
     def get_light_state(self, light):
@@ -196,9 +201,16 @@ class TLDetector(object):
 
         x, y = self.project_to_image_plane(light)
 
-	print("Traffic light position in image:",x, y)
+        r = 10
+        cv2.circle(cv_image, (int(x), int(y)), int(r), (255, 0, 0), 3)
+
+        print("Traffic light position in image:",x, y)
 
         #TODO use light location to zoom in on traffic light in image
+
+        # for debugging purposes - use 'rqt_image_view' in a separate terminal to see the image
+        img = self.bridge.cv2_to_imgmsg(cv_image, "bgr8")
+        self.test_image_pub.publish(img)
 
         #Get classification
         return self.light_classifier.get_classification(cv_image)

@@ -1,4 +1,8 @@
 <?xml version="1.0"?>
 <launch>
-    <node pkg="tl_detector" type="tl_detector.py" name="tl_detector" output="screen" cwd="node"/>
+    <node pkg="tl_detector" type="tl_detector.py" name="tl_detector" output="screen" cwd="node">
+      <param name="canvas_size_x" value="10.0" />
+      <param name="canvas_size_y" value="7.0" />
+      <param name="camera_height" value="2.0" />
+    </node>
 </launch>
