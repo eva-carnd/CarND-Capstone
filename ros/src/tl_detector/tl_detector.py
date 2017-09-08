@@ -12,7 +12,7 @@ import tf2_ros
 import tf2_geometry_msgs
 import cv2
 import math
-from traffic_light_config import config
+import yaml
 
 STATE_COUNT_THRESHOLD = 3
 
@@ -36,7 +36,10 @@ class TLDetector(object):
         testing your solution in real life so don't rely on it in the final submission.
         '''
         sub3 = rospy.Subscriber('/vehicle/traffic_lights', TrafficLightArray, self.traffic_cb)
-        sub6 = rospy.Subscriber('/camera/image_raw', Image, self.image_cb)
+        sub6 = rospy.Subscriber('/image_color', Image, self.image_cb)
+
+        config_string = rospy.get_param("/traffic_light_config")
+        self.config = yaml.load(config_string)
 
         self.test_image_pub = rospy.Publisher('/test_image', Image, queue_size=2)
         self.upcoming_red_light_pub = rospy.Publisher('/traffic_waypoint', Int32, queue_size=1)
@@ -118,20 +121,10 @@ class TLDetector(object):
 
         """
 
-    	pose_in_world = PoseStamped()
-    	pose_in_world.pose.position.x = point_in_world[0]
-    	pose_in_world.pose.position.y = point_in_world[1]
-    	pose_in_world.pose.position.z = rospy.get_param("~camera_height")
-
-        #fx = config.camera_info.focal_length_x
-        #fy = config.camera_info.focal_length_y
-
-    	# TODO this is a hack, only for testing, we actually have to calculate the canvas size
-    	fx = rospy.get_param("~canvas_size_x")
-    	fy = rospy.get_param("~canvas_size_y")
-
-        image_width = config.camera_info.image_width
-        image_height = config.camera_info.image_height
+        fx = self.config['camera_info']['focal_length_x']
+        fy = self.config['camera_info']['focal_length_y']
+        image_width = self.config['camera_info']['image_width']
+        image_height = self.config['camera_info']['image_height']
 
         # get transform between pose of camera and world frame
         trans = None
@@ -229,8 +222,9 @@ class TLDetector(object):
             int: ID of traffic light color (specified in styx_msgs/TrafficLight)
 
         """
+
         closest_light_position = None
-        light_positions = config.light_positions
+        light_positions = self.config['light_positions']
         if(self.pose and self.waypoints):
 	    #print("Self",self.pose.pose.position.x,self.pose.pose.position.y,self.pose.pose.position.z)
             closest_waypoint_index = self.get_closest_waypoint(self.pose.pose)
@@ -250,6 +244,7 @@ class TLDetector(object):
 	    #print("Closest Light:",closest_light_position)
             state = self.get_light_state(closest_light_position)
             #return light_wp, state # TODO enable
+
         self.waypoints = None
         return -1, TrafficLight.UNKNOWN
 
