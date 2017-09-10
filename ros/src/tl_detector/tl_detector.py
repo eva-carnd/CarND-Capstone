@@ -151,21 +151,38 @@ class TLDetector(object):
         except (tf.Exception, tf.LookupException, tf.ConnectivityException): # TODO tf2 will throw different exceptions
             rospy.logerr("Failed to find camera to map transform")
 
+        cam_tilt = rospy.get_param("~cam_tilt", 0.30)
+        cam_height = rospy.get_param("~cam_height", 2.0)
+
         camera_x = pose_transformed.pose.position.x
         camera_y = pose_transformed.pose.position.y
         camera_z = pose_transformed.pose.position.z
 
-        print("camera_x", camera_x, "camera_y", camera_y, "camera_z", camera_z)
+        #print("camera_x", camera_x, "camera_y", camera_y, "camera_z", camera_z)
 
         # http://docs.opencv.org/2.4/modules/calib3d/doc/camera_calibration_and_3d_reconstruction.html
         X = -pose_transformed.pose.position.y
-        Y = -pose_transformed.pose.position.z
+        Y = -pose_transformed.pose.position.z + cam_height
         Z = pose_transformed.pose.position.x
+
+        fov_x = rospy.get_param("~fov_x", 0.33)
+        fov_y = rospy.get_param("~fov_y", 0.33)
 
         cx = int(math.floor(image_width/2.0))
         cy = int(math.floor(image_height/2.0))
-        u = fx * X + cx * Z
-        v = fy * Y + cy * Z
+
+        alpha_x = (math.pi/2.0) - math.acos(abs(X/Z))
+        ratio_x = math.tan(alpha_x) / math.tan(fov_x/2.0)
+        if (X < 0):
+            ratio_x = -ratio_x
+        u = (ratio_x * cx) + cx
+
+        alpha_y = (math.pi/2.0) - math.acos(abs(Y/Z))
+        ratio_y = math.tan(alpha_y) / math.tan(fov_y/2.0)
+        if (Y < 0):
+            ratio_y = -ratio_y
+        v = (ratio_y * cy) + cy
+        #v = 300
 
         return (u, v)
 
