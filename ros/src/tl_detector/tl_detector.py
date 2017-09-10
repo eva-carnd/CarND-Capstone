@@ -157,18 +157,17 @@ class TLDetector(object):
 
         print("camera_x", camera_x, "camera_y", camera_y, "camera_z", camera_z)
 
-        # and now for image frame
-        camera_x = -pose_transformed.pose.position.y
-        camera_y = -pose_transformed.pose.position.z
-        camera_z = pose_transformed.pose.position.x
+        # http://docs.opencv.org/2.4/modules/calib3d/doc/camera_calibration_and_3d_reconstruction.html
+        X = -pose_transformed.pose.position.y
+        Y = -pose_transformed.pose.position.z
+        Z = pose_transformed.pose.position.x
 
-        objectPoints = np.array([[camera_x, camera_y, camera_z]], dtype=np.float32)
-        cameraMatrix = np.array([[fx, 0, image_width/2.0], [0, fy, image_height/2.0], [0, 0, 1]])
-        projected, _ = cv2.projectPoints(objectPoints, (0,0,0), (0,0,0), cameraMatrix, None)
-        pix_x = int(math.floor(projected[0,0,0]))
-        pix_y = int(math.floor(projected[0,0,1]))
+        cx = int(math.floor(image_width/2.0))
+        cy = int(math.floor(image_height/2.0))
+        u = fx * X + cx * Z
+        v = fy * Y + cy * Z
 
-        return (pix_x, pix_y)
+        return (u, v)
 
     def get_light_state(self, light):
         """Determines the current color of the traffic light
