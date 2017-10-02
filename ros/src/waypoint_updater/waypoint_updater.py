@@ -4,7 +4,7 @@ import rospy
 import tf
 
 from std_msgs.msg import Int32
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import PoseStamped, TwistStamped
 from styx_msgs.msg import Lane, Waypoint
 
 import math
@@ -33,6 +33,7 @@ class WaypointUpdater(object):
 
         # Subscribers
         rospy.Subscriber('/current_pose', PoseStamped, self.pose_cb)
+        rospy.Subscriber('/current_velocity', TwistStamped, self.current_velocity_cb)
         self.base_waypoints_sub = rospy.Subscriber('/base_waypoints', Lane, self.waypoints_cb)
         self.traffic_waypoint_sub = rospy.Subscriber('/traffic_waypoint', Int32, self.traffic_cb)
 
@@ -40,67 +41,181 @@ class WaypointUpdater(object):
         self.final_waypoints_pub = rospy.Publisher('final_waypoints', Lane, queue_size=1)
 
         self.waypoints = None
+        self.inter_waypoint_distances = None
         self.latest_pose = None
+        self.current_velocity = None
         self.num_waypoints = 0
         self.closest_waypoint = 0
         self.next_red_light = None
         self.ever_received_traffic_waypoint = False
+
         self.MAX_VELOCITY = rospy.get_param("~max_velocity")
-        self.REDUCE_SPEED_DISTANCE = rospy.get_param("~reduce_speed_distance")
         self.STOP_DISTANCE = rospy.get_param("~stop_distance")
+        self.LOOP = rospy.get_param("~loop")
+        self.MAX_ACCEL = rospy.get_param("~max_accel")
 
         r = rospy.Rate(5.0)
         while not rospy.is_shutdown():
             self.calculate_and_publish_next_waypoints()
             r.sleep()
 
-    def calculate_waypoint_velocity(self, waypoint_index):
-        if self.ever_received_traffic_waypoint and self.waypoints:
-            velocity = self.MAX_VELOCITY
+    def get_braking_distance(self, vi):
+        # Use the formula for constant acceleration:
+        #   df = di + (vf^2 - vi^2) / 2a
+        #      = 0  + (0    - vi^2) / 2a
+        return -(vi ** 2) / (2 * -self.get_accel())
+
+    def get_lookahead_indices(self, start):
+        end = start + LOOKAHEAD_WPS
+        if end > self.num_waypoints:
+            r = range(start, self.num_waypoints)
+            if self.LOOP:
+                for i in range(self.num_waypoints, end):
+                    r.append(i % self.num_waypoints)
         else:
-            rospy.loginfo('Waiting for waypoints or red-light info, so set zero target velocity.')
-            velocity = 0
+            r = range(start, end)
+        return r
 
-        if self.next_red_light and self.waypoints and (waypoint_index <= self.next_red_light):
-            distance_to_red_light = self.distance(self.waypoints, waypoint_index, self.next_red_light)
-            if (distance_to_red_light < self.STOP_DISTANCE):
-                velocity = 0.0
-            elif (distance_to_red_light < self.REDUCE_SPEED_DISTANCE):
-                ratio = distance_to_red_light / self.REDUCE_SPEED_DISTANCE
-                velocity = self.MAX_VELOCITY * ratio
+    def get_accel(self):
+        return self.MAX_ACCEL / 4
 
-        if velocity > self.MAX_VELOCITY:
-            velocity = self.MAX_VELOCITY
+    def get_next_velocity(self, decel, vi, ix):
+        assert(vi >= 0)
 
-        return velocity
+        if decel:
+            if vi == 0:
+                return 0
+            a = -self.get_accel()
+        elif vi < self.MAX_VELOCITY:
+            a = self.get_accel()
+        else:
+            return self.MAX_VELOCITY
 
+        assert(a != 0)
+
+        # Rearrange the formula for constant acceleration:
+        #   df = di + (vf^2 - vi^2) / 2a
+        #   vf = sqrt(2a(df - di) + vi^2)
+        vf_squared = 2 * a * self.inter_waypoint_distances[ix] + vi ** 2
+        if vf_squared == 0:
+            return 0
+        elif vf_squared > 0:
+            vf = math.sqrt(vf_squared)
+            if vf < 0.01:
+                return 0
+            else:
+                return min(vf, self.MAX_VELOCITY)
+        else:
+            assert(decel)
+            t_at_next_waypoint = self.inter_waypoint_distances[ix] / vi
+            vf = vi - t_at_next_waypoint
+            if vf < 0:
+                return 0
+            else:
+                return min(vf, self.MAX_VELOCITY)
+
+    # Alternate implementation for reference.
+    def get_next_velocity_simple(self, decel, vi, ix):
+        t_at_next_waypoint = self.inter_waypoint_distances[ix] / vi
+
+        if decel:
+            # Decelerate
+            vf = vi - t_at_next_waypoint
+            if vf < 0:
+                vf = 0
+        else:
+            if vi < self.MAX_VELOCITY:
+                # Accelerate
+                vf = vi + t_at_next_waypoint
+                if vf > self.MAX_VELOCITY:
+                    vf = self.MAX_VELOCITY
+            else:
+                vf = self.MAX_VELOCITY
+
+    def calculate_waypoints(self):
+        wps = []
+        wp_vels = []
+        if (self.latest_pose and self.waypoints and self.inter_waypoint_distances):
+            next_wp = self.next_waypoint(self.waypoints, self.latest_pose.pose)
+            self.closest_waypoint = next_wp
+
+            indices = self.get_lookahead_indices(next_wp)
+
+            vi = self.current_velocity.twist.linear.x
+
+            stop_hard = False
+            stop_ix = None
+            decel = False
+            decel_ix = None
+
+            for ix in indices:
+                if self.next_red_light and ix <= self.next_red_light:
+                    distance_to_red_light = self.distance(self.waypoints, ix, self.next_red_light)
+                    if distance_to_red_light < self.STOP_DISTANCE:
+                        stop_hard = True
+                        if stop_ix is None:
+                            stop_ix = ix
+                    if distance_to_red_light < self.get_braking_distance(vi):
+                        decel = True
+                        if decel_ix is None:
+                            decel_ix = ix
+
+                if not self.LOOP:
+                    distance_to_end = self.distance(self.waypoints, ix, self.num_waypoints - 1)
+                    if distance_to_end < self.STOP_DISTANCE:
+                        stop_hard = True
+                        if stop_ix is None:
+                            stop_ix = ix
+                    if distance_to_end < self.get_braking_distance(vi):
+                        decel = True
+                        if decel_ix is None:
+                            decel_ix = ix
+
+                if stop_hard or (self.next_red_light and ix > self.next_red_light):
+                    vf = 0
+                else:
+                    vf = self.get_next_velocity(decel, vi, ix)
+
+                wp = self.waypoints[ix]
+                wp.twist.twist.linear.x = vf
+                wps.append(wp)
+                wp_vels.append(vf)
+
+                vi = vf
+
+            rospy.loginfo('plan: stop_hard=[{}] decel=[{}]'.format(stop_hard, decel))
+            if stop_hard:
+                rospy.loginfo('plan: stop hard in {} wps'.format(stop_ix - next_wp))
+            if decel:
+                rospy.loginfo('plan: decel in {} wps'.format(decel_ix - next_wp))
+
+        return wps
 
     def calculate_and_publish_next_waypoints(self):
-        wps = []
-        if (self.latest_pose and self.waypoints):
-            ix = self.next_waypoint(self.waypoints, self.latest_pose.pose)
-            self.closest_waypoint = ix
-            ix_end = ix+LOOKAHEAD_WPS
-            if ix_end > self.num_waypoints:
-                ix_end = self.num_waypoints
-            for i in range(ix, ix_end):
-                self.set_waypoint_velocity(self.waypoints, i, self.calculate_waypoint_velocity(i))
-                wp = self.waypoints[i]
-                wps.append(wp)
-            rospy.loginfo("""Waypoint ix: {} num: {}  v: {}""".format(ix, len(wps), self.get_waypoint_velocity(wps[0])))
-
         final_wps = Lane()
-        final_wps.waypoints = wps
+        final_wps.waypoints = self.calculate_waypoints()
 
         self.final_waypoints_pub.publish(final_wps)
 
     def pose_cb(self, msg):
         self.latest_pose = msg
 
+    def current_velocity_cb(self, current_velocity):
+        self.current_velocity = current_velocity
+
     def waypoints_cb(self, waypoints):
         self.waypoints = waypoints.waypoints
         self.num_waypoints = len(self.waypoints)
         self.base_waypoints_sub.unregister()
+
+        if self.inter_waypoint_distances is None:
+            distances = []
+            for i in xrange(len(self.waypoints)):
+                next_i = i + 1
+                if self.LOOP and (i == (self.num_waypoints - 1)):
+                    next_i = 0
+                distances.append(self.distance(self.waypoints, i, next_i))
+            self.inter_waypoint_distances = distances
 
     def traffic_cb(self, msg):
         if (msg.data >= 0):
