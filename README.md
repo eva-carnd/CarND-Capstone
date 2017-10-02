@@ -7,6 +7,13 @@ This is the project repo for the final project of the Udacity Self-Driving Car N
 * Jes Fink-Jensen
 * Justin Heaton
 
+### Launch File Info for Udacity Reviewers
+
+* For testing on Carla, use ros/launch/site.launch
+* For testing on the simulator:
+  * By default, use ros/launch/styx.launch
+  * If you have a low performance machine, use ros/launch/styx_lo.launch
+
 ### Installation 
 * Be sure that your workstation is running Ubuntu 16.04 Xenial Xerus or Ubuntu 14.04 Trusty Tahir. [Ubuntu downloads can be found here](https://www.ubuntu.com/download/desktop).
 * If using a Virtual Machine to install Ubuntu, use the following configuration as minimum:
