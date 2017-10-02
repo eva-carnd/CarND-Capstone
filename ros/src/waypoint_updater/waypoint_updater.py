@@ -114,24 +114,6 @@ class WaypointUpdater(object):
             else:
                 return min(vf, self.MAX_VELOCITY)
 
-    # Alternate implementation for reference.
-    def get_next_velocity_simple(self, decel, vi, ix):
-        t_at_next_waypoint = self.inter_waypoint_distances[ix] / vi
-
-        if decel:
-            # Decelerate
-            vf = vi - t_at_next_waypoint
-            if vf < 0:
-                vf = 0
-        else:
-            if vi < self.MAX_VELOCITY:
-                # Accelerate
-                vf = vi + t_at_next_waypoint
-                if vf > self.MAX_VELOCITY:
-                    vf = self.MAX_VELOCITY
-            else:
-                vf = self.MAX_VELOCITY
-
     def calculate_waypoints(self):
         wps = []
         wp_vels = []
