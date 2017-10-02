@@ -26,6 +26,14 @@ TODO (for Yousuf and Aaron): Stopline location for each traffic light.
 
 LOOKAHEAD_WPS = 200 # Number of waypoints we will publish. You can change this number
 
+class PlannedWaypoint:
+    def __init__(self, wp, ix):
+        self.wp = wp
+        self.ix = ix
+
+    def __repr__(self):
+        return '{:.2f}'.format(self.wp.twist.twist.linear.x)
+
 class Planner:
     def __init__(self, waypoints):
         self.waypoints = waypoints
@@ -45,14 +53,21 @@ class Planner:
                 next_i = 0
             self.inter_waypoint_distances.append(self.waypoint_helper.distance(i, next_i, check_order = False))
 
+        self.first_plan = True
+        self.prev_plan= None
+        self.prev_next_red_light = None
+
+        self.need_light_plan = False
+        self.have_planned_for_light = False
+
     def _get_braking_distance(self, vi):
         # Use the formula for constant acceleration:
         #   df = di + (vf^2 - vi^2) / 2a
         #      = 0  + (0    - vi^2) / 2a
         return -(vi ** 2) / (2 * -self._get_accel())
 
-    def _get_lookahead_indices(self, start):
-        end = start + LOOKAHEAD_WPS
+    def _get_lookahead_indices(self, start, reuse_count):
+        end = start + LOOKAHEAD_WPS - reuse_count
         if end > self.num_waypoints:
             r = range(start, self.num_waypoints)
             if self.LOOP:
@@ -101,14 +116,39 @@ class Planner:
                 return min(vf, self.MAX_VELOCITY)
 
     def plan(self, latest_pose, current_velocity, next_red_light):
-        wps = []
+        current_plan = []
         wp_vels = []
-        if (latest_pose):
 
+        if (latest_pose and current_velocity):
             next_wp = self.waypoint_helper.next_waypoint(latest_pose.pose)
             self.closest_waypoint = next_wp
 
-            indices = self._get_lookahead_indices(next_wp)
+            if self.first_plan:
+                reuse = False
+                self.first_plan = False
+            elif self.need_light_plan:
+                # TODO: Handle loop.
+                light_in_plan_horizon = ((next_red_light - next_wp) < LOOKAHEAD_WPS)
+                if light_in_plan_horizon:
+                    reuse = False
+                else:
+                    reuse = True
+            else:
+                reuse = True
+
+            if next_red_light != self.prev_next_red_light:
+                self.need_light_plan = True
+
+            if reuse:
+                for planned_wp in self.prev_plan:
+                    if planned_wp.ix >= next_wp:
+                        current_plan.append(planned_wp)
+                        next_wp = planned_wp.ix
+                        vi = planned_wp.wp.twist.twist.linear.x
+
+            rospy.loginfo('plan: reused {} wps. need_light_plan {}'.format(len(current_plan), self.need_light_plan))
+
+            indices = self._get_lookahead_indices(next_wp, len(current_plan))
 
             vi = current_velocity.twist.linear.x
 
@@ -124,10 +164,12 @@ class Planner:
                         stop_hard = True
                         if stop_ix is None:
                             stop_ix = ix
+                        self.need_light_plan = False
                     if distance_to_red_light < self._get_braking_distance(vi):
                         decel = True
                         if decel_ix is None:
                             decel_ix = ix
+                        self.need_light_plan = False
 
                 if not self.LOOP:
                     distance_to_end = self.waypoint_helper.distance(ix, self.num_waypoints - 1)
@@ -147,17 +189,25 @@ class Planner:
 
                 wp = self.waypoints[ix]
                 wp.twist.twist.linear.x = vf
-                wps.append(wp)
+                current_plan.append(PlannedWaypoint(wp, ix))
                 wp_vels.append(vf)
 
                 vi = vf
 
-            rospy.loginfo('plan: stop_hard=[{}] decel=[{}] wp_vels=[{} ...]'.format(stop_hard, decel, wp_vels[:5]))
+            # rospy.loginfo('plan: stop_hard=[{}] decel=[{}] wp_vels=[{} ...]'.format(stop_hard, decel, wp_vels[:5]))
             if stop_hard:
                 rospy.loginfo('plan: stop hard in {} wps'.format(stop_ix - next_wp))
             if decel:
                 rospy.loginfo('plan: decel in {} wps'.format(decel_ix - next_wp))
 
+        rospy.loginfo('plan: wp_vels=[{} ...]'.format(current_plan[:5]))
+
+        self.prev_plan = current_plan
+        self.prev_next_red_light = next_red_light
+
+        wps = []
+        for planned_waypoint in current_plan:
+            wps.append(planned_waypoint.wp)
         return wps
 
 class WaypointHelper:
