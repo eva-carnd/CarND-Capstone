@@ -61,10 +61,17 @@ class Planner:
         self.have_planned_for_light = False
 
     def _get_braking_distance(self, vi):
+        # Always use gentle acceleration for conservative estimate of braking distance.
+        a = -self._get_accel(gentle = True)
+
         # Use the formula for constant acceleration:
         #   df = di + (vf^2 - vi^2) / 2a
         #      = 0  + (0    - vi^2) / 2a
-        return -(vi ** 2) / (2 * -self._get_accel())
+        #
+        braking_distance = -(vi ** 2) / (2 * a)
+
+        stop_buffer = 5
+        return braking_distance + stop_buffer
 
     def _get_lookahead_indices(self, start, reuse_count):
         end = start + LOOKAHEAD_WPS - reuse_count
@@ -77,18 +84,21 @@ class Planner:
             r = range(start, end)
         return r
 
-    def _get_accel(self):
-        return self.MAX_ACCEL / 4
+    def _get_accel(self, gentle):
+        if gentle:
+            return self.MAX_ACCEL / 4
+        else:
+            return self.MAX_ACCEL
 
-    def _get_next_velocity(self, decel, vi, ix):
+    def _get_next_velocity(self, decel, vi, ix, gentle):
         assert(vi >= 0)
 
         if decel:
             if vi == 0:
                 return 0
-            a = -self._get_accel()
+            a = -self._get_accel(gentle)
         elif vi < self.MAX_VELOCITY:
-            a = self._get_accel()
+            a = self._get_accel(gentle)
         else:
             return self.MAX_VELOCITY
 
@@ -115,6 +125,13 @@ class Planner:
             else:
                 return min(vf, self.MAX_VELOCITY)
 
+    def _count_waypoints_between(self, start, end):
+        if self.LOOP and start > end:
+            return self.num_waypoints - start + end
+
+        assert(start <= end)
+        return end - start
+
     def plan(self, latest_pose, current_velocity, next_red_light):
         current_plan = []
         wp_vels = []
@@ -123,21 +140,39 @@ class Planner:
             next_wp = self.waypoint_helper.next_waypoint(latest_pose.pose)
             self.closest_waypoint = next_wp
 
+            if next_red_light != self.prev_next_red_light:
+                self.need_light_plan = True
+
             if self.first_plan:
                 reuse = False
                 self.first_plan = False
+                gentle = True
             elif self.need_light_plan:
-                # TODO: Handle loop.
-                light_in_plan_horizon = ((next_red_light - next_wp) < LOOKAHEAD_WPS)
-                if light_in_plan_horizon:
-                    reuse = False
+                if next_red_light:
+                    count_waypoints_to_red_light = self._count_waypoints_between(next_wp, next_red_light)
+                    light_in_plan_horizon = count_waypoints_to_red_light < LOOKAHEAD_WPS
+                    if light_in_plan_horizon:
+                        reuse = False
+                        self.need_light_plan = False
+                    else:
+                        reuse = True
+
+                    distance_to_red_light = self.waypoint_helper.distance(next_wp, next_red_light, check_order = False)
+                    if distance_to_red_light > self._get_braking_distance(current_velocity.twist.linear.x):
+                        gentle = True
+                    else:
+                        if current_velocity > self.MAX_VELOCITY / 2:
+                            gentle = False
+                        else:
+                            gentle = True
                 else:
-                    reuse = True
+                    reuse = False
+                    self.need_light_plan = False
+                    # Light turned green, so don't be gentle.
+                    gentle = False
             else:
                 reuse = True
-
-            if next_red_light != self.prev_next_red_light:
-                self.need_light_plan = True
+                gentle = True
 
             if reuse:
                 for planned_wp in self.prev_plan:
@@ -164,12 +199,10 @@ class Planner:
                         stop_hard = True
                         if stop_ix is None:
                             stop_ix = ix
-                        self.need_light_plan = False
                     if distance_to_red_light < self._get_braking_distance(vi):
                         decel = True
                         if decel_ix is None:
                             decel_ix = ix
-                        self.need_light_plan = False
 
                 if not self.LOOP:
                     distance_to_end = self.waypoint_helper.distance(ix, self.num_waypoints - 1)
@@ -185,7 +218,7 @@ class Planner:
                 if stop_hard or (next_red_light and ix > next_red_light):
                     vf = 0
                 else:
-                    vf = self._get_next_velocity(decel, vi, ix)
+                    vf = self._get_next_velocity(decel, vi, ix, gentle)
 
                 wp = self.waypoints[ix]
                 wp.twist.twist.linear.x = vf
