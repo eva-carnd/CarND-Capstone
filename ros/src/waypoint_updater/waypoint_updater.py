@@ -132,47 +132,53 @@ class Planner:
         assert(start <= end)
         return end - start
 
+    def _recommend_reuse_and_gentleness(self, next_wp, next_red_light, current_velocity):
+        if next_red_light != self.prev_next_red_light:
+            self.need_light_plan = True
+
+        if self.first_plan:
+            reuse = False
+            self.first_plan = False
+            gentle = True
+        elif self.need_light_plan:
+            if next_red_light:
+                count_waypoints_to_red_light = self._count_waypoints_between(next_wp, next_red_light)
+                light_in_plan_horizon = count_waypoints_to_red_light < LOOKAHEAD_WPS
+                if light_in_plan_horizon:
+                    reuse = False
+                    self.need_light_plan = False
+                else:
+                    reuse = True
+
+                distance_to_red_light = self.waypoint_helper.distance(next_wp, next_red_light, check_order = False)
+                if distance_to_red_light > self._get_braking_distance(current_velocity):
+                    gentle = True
+                else:
+                    if current_velocity > self.MAX_VELOCITY / 2:
+                        gentle = False
+                    else:
+                        gentle = True
+            else:
+                reuse = False
+                self.need_light_plan = False
+                # Light turned green, so don't be gentle.
+                gentle = False
+        else:
+            reuse = True
+            gentle = True
+
+        return reuse, gentle
+
     def plan(self, latest_pose, current_velocity, next_red_light):
         current_plan = []
-        wp_vels = []
 
         if (latest_pose and current_velocity):
             next_wp = self.waypoint_helper.next_waypoint(latest_pose.pose)
             self.closest_waypoint = next_wp
 
-            if next_red_light != self.prev_next_red_light:
-                self.need_light_plan = True
+            vi = current_velocity.twist.linear.x
 
-            if self.first_plan:
-                reuse = False
-                self.first_plan = False
-                gentle = True
-            elif self.need_light_plan:
-                if next_red_light:
-                    count_waypoints_to_red_light = self._count_waypoints_between(next_wp, next_red_light)
-                    light_in_plan_horizon = count_waypoints_to_red_light < LOOKAHEAD_WPS
-                    if light_in_plan_horizon:
-                        reuse = False
-                        self.need_light_plan = False
-                    else:
-                        reuse = True
-
-                    distance_to_red_light = self.waypoint_helper.distance(next_wp, next_red_light, check_order = False)
-                    if distance_to_red_light > self._get_braking_distance(current_velocity.twist.linear.x):
-                        gentle = True
-                    else:
-                        if current_velocity > self.MAX_VELOCITY / 2:
-                            gentle = False
-                        else:
-                            gentle = True
-                else:
-                    reuse = False
-                    self.need_light_plan = False
-                    # Light turned green, so don't be gentle.
-                    gentle = False
-            else:
-                reuse = True
-                gentle = True
+            reuse, gentle = self._recommend_reuse_and_gentleness(next_wp, next_red_light, vi)
 
             if reuse:
                 for planned_wp in self.prev_plan:
@@ -185,35 +191,23 @@ class Planner:
 
             indices = self._get_lookahead_indices(next_wp, len(current_plan))
 
-            vi = current_velocity.twist.linear.x
-
             stop_hard = False
-            stop_ix = None
             decel = False
-            decel_ix = None
 
             for ix in indices:
                 if next_red_light and ix <= next_red_light:
                     distance_to_red_light = self.waypoint_helper.distance(ix, next_red_light)
                     if distance_to_red_light < self.STOP_DISTANCE:
                         stop_hard = True
-                        if stop_ix is None:
-                            stop_ix = ix
                     if distance_to_red_light < self._get_braking_distance(vi):
                         decel = True
-                        if decel_ix is None:
-                            decel_ix = ix
 
                 if not self.LOOP:
                     distance_to_end = self.waypoint_helper.distance(ix, self.num_waypoints - 1)
                     if distance_to_end < self.STOP_DISTANCE:
                         stop_hard = True
-                        if stop_ix is None:
-                            stop_ix = ix
                     if distance_to_end < self._get_braking_distance(vi):
                         decel = True
-                        if decel_ix is None:
-                            decel_ix = ix
 
                 if stop_hard or (next_red_light and ix > next_red_light):
                     vf = 0
@@ -223,15 +217,8 @@ class Planner:
                 wp = self.waypoints[ix]
                 wp.twist.twist.linear.x = vf
                 current_plan.append(PlannedWaypoint(wp, ix))
-                wp_vels.append(vf)
 
                 vi = vf
-
-            # rospy.loginfo('plan: stop_hard=[{}] decel=[{}] wp_vels=[{} ...]'.format(stop_hard, decel, wp_vels[:5]))
-            if stop_hard:
-                rospy.loginfo('plan: stop hard in {} wps'.format(stop_ix - next_wp))
-            if decel:
-                rospy.loginfo('plan: decel in {} wps'.format(decel_ix - next_wp))
 
         rospy.loginfo('plan: wp_vels=[{} ...]'.format(current_plan[:5]))
 
