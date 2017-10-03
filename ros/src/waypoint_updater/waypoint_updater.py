@@ -58,7 +58,6 @@ class Planner:
         self.prev_next_red_light = None
 
         self.need_light_plan = False
-        self.have_planned_for_light = False
 
     def _get_braking_distance(self, vi):
         # Always use gentle acceleration for conservative estimate of braking distance.
@@ -117,13 +116,10 @@ class Planner:
             else:
                 return min(vf, self.MAX_VELOCITY)
         else:
+            # If vf_squared is negative, there is no square root. This can only happen in the case of deceleration.
+            # This implies a final velocity of 0.
             assert(decel)
-            t_at_next_waypoint = self.inter_waypoint_distances[ix] / vi
-            vf = vi - t_at_next_waypoint
-            if vf < 0:
-                return 0
-            else:
-                return min(vf, self.MAX_VELOCITY)
+            return 0
 
     def _count_waypoints_between(self, start, end):
         if self.LOOP and start > end:
@@ -174,7 +170,6 @@ class Planner:
 
         if (latest_pose and current_velocity):
             next_wp = self.waypoint_helper.next_waypoint(latest_pose.pose)
-            self.closest_waypoint = next_wp
 
             vi = current_velocity.twist.linear.x
 
@@ -322,7 +317,6 @@ class WaypointUpdater(object):
         self.waypoints = None
         self.latest_pose = None
         self.current_velocity = None
-        self.closest_waypoint = 0
         self.next_red_light = None
         self.ever_received_traffic_waypoint = False
 
@@ -341,7 +335,7 @@ class WaypointUpdater(object):
 
     def calculate_waypoints(self):
         wps = []
-        if self.planner and self.latest_pose and self.current_velocity:
+        if self.planner and self.latest_pose and self.current_velocity and self.ever_received_traffic_waypoint:
             wps = self.planner.plan(self.latest_pose, self.current_velocity, self.next_red_light)
         return wps
 
