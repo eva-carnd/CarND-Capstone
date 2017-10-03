@@ -18,7 +18,7 @@ class TLClassifier(object):
         if sim:
             model_name = 'squeezeNet_sim'
         else:
-            model_name = 'squeezeNet_candidate'
+            model_name = 'squeezeNet_real'
 
         self.graph, ops = load_graph('light_classification/trained_model/{}.frozen.pb'.format(model_name))
         self.sess = tf.Session(graph = self.graph)
