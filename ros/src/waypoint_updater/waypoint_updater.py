@@ -54,13 +54,14 @@ class WaypointUpdater(object):
             self.calculate_and_publish_next_waypoints()
             r.sleep()
 
-    def calculate_waypoint_velocity(self, waypoint_index):
+    def get_default_velocity(self):
         if self.ever_received_traffic_waypoint and self.waypoints:
-            velocity = self.MAX_VELOCITY
+            return self.MAX_VELOCITY
         else:
             rospy.loginfo('Waiting for waypoints or red-light info, so set zero target velocity.')
-            velocity = 0
+            return 0
 
+    def calculate_waypoint_velocity(self, waypoint_index):
         if self.next_red_light and self.waypoints:
             if waypoint_index <= self.next_red_light:
                 distance_to_red_light = self.distance(self.waypoints, waypoint_index, self.next_red_light)
@@ -69,8 +70,12 @@ class WaypointUpdater(object):
                 elif (distance_to_red_light < self.REDUCE_SPEED_DISTANCE):
                     ratio = distance_to_red_light / self.REDUCE_SPEED_DISTANCE
                     velocity = self.MAX_VELOCITY * ratio
+                else:
+                    velocity = self.get_default_velocity()
             else:
                 velocity = 0.0
+        else:
+            velocity = self.get_default_velocity()
 
         if velocity > self.MAX_VELOCITY:
             velocity = self.MAX_VELOCITY
